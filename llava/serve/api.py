@@ -16,6 +16,25 @@ from io import BytesIO
 from transformers import TextStreamer
 from flask import Flask, request, jsonify, make_response
 
+disable_torch_init()
+
+INITIAL_MODEL_PATH = 'liuhaotian/llava-v1.5-7b'
+CURRENT_MODEL_PATH = INITIAL_MODEL_PATH
+MODEL_BASE = None
+LOAD_4BIT = False
+LOAD_8BIT = False
+
+# Model
+model_name = get_model_name_from_path(INITIAL_MODEL_PATH)
+
+tokenizer, model, image_processor, context_len = load_pretrained_model(
+    INITIAL_MODEL_PATH,
+    MODEL_BASE,
+    model_name,
+    LOAD_8BIT,
+    LOAD_4BIT,
+    device='cuda'
+)
 
 app = Flask(__name__)
 
@@ -47,7 +66,7 @@ def get_args():
     return parser.parse_args()
 
 
-def load_image(image_file):
+def load_image(image_file: str):
     if image_file.startswith('http://') or image_file.startswith('https://'):
         response = requests.get(image_file)
         image = Image.open(BytesIO(response.content)).convert('RGB')
@@ -56,25 +75,27 @@ def load_image(image_file):
     return image
 
 
-def load_image_from_base64(base64_str):
+def load_image_from_base64(base64_str: str):
     image_bytes = base64.b64decode(base64_str)
     image = Image.open(BytesIO(image_bytes)).convert('RGB')
     return image
 
 
-def run_inference(data):
-    # Model
-    disable_torch_init()
-    model_name = get_model_name_from_path(data['model_path'])
+def run_inference(data: dict, current_model_path: str, tokenizer, model, image_processor, context_len):
+    model_path = data.get('model_path')
+    model_name = get_model_name_from_path(model_path)
 
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
-        data['model_path'],
-        data['model_base'],
-        model_name,
-        data['load_8bit'],
-        data['load_4bit'],
-        device='cuda'
-    )
+    if current_model_path != model_path:
+        CURRENT_MODEL_PATH = model_path
+
+        tokenizer, model, image_processor, context_len = load_pretrained_model(
+            CURRENT_MODEL_PATH,
+            MODEL_BASE,
+            model_name,
+            LOAD_8BIT,
+            LOAD_4BIT,
+            device='cuda'
+        )
 
     if 'llama-2' in model_name.lower():
         conv_mode = 'llava_llama_2'
@@ -188,21 +209,26 @@ def process_image():
     try:
         payload = request.get_json()
 
-        data = {
-            'model_path': payload.get('model_path', 'liuhaotian/llava-v1.5-13b'),
-            'model_base': payload.get('model_base', None),
-            'image_base64': payload.get('image_base64'),
-            'prompt': payload.get('prompt'),
-            'conv_mode': payload.get('conv_mode', None),
-            'temperature': payload.get('temperature', 0.2),
-            'max_new_tokens': payload.get('max_new_tokens', 512),
-            'load_8bit': payload.get('load_8bit', False),
-            'load_4bit': payload.get('load_4bit', False),
-            'image_aspect_ratio': payload.get('image_aspect_ratio', 'pad'),
-            'stream': payload.get('stream', False)
-        }
-
-        outputs = run_inference(data)
+        outputs = run_inference(
+            {
+                'model_path': payload.get('model_path', 'liuhaotian/llava-v1.5-13b'),
+                'model_base': payload.get('model_base', None),
+                'image_base64': payload.get('image_base64'),
+                'prompt': payload.get('prompt'),
+                'conv_mode': payload.get('conv_mode', None),
+                'temperature': payload.get('temperature', 0.2),
+                'max_new_tokens': payload.get('max_new_tokens', 512),
+                'load_8bit': payload.get('load_8bit', False),
+                'load_4bit': payload.get('load_4bit', False),
+                'image_aspect_ratio': payload.get('image_aspect_ratio', 'pad'),
+                'stream': payload.get('stream', False)
+            },
+            CURRENT_MODEL_PATH,
+            tokenizer,
+            model,
+            image_processor,
+            context_len
+        )
 
         return make_response(jsonify(
             {

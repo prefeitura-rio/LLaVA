@@ -4,7 +4,7 @@ import requests
 import base64
 
 
-BASE_URI = 'https://9iyo58zn2vamnx-8888.proxy.runpod.net'
+BASE_URI = 'https://b7jx50f8adg41e-5000.proxy.runpod.net'
 STREAM = True
 
 
@@ -43,7 +43,6 @@ if __name__ == '__main__':
         stream=STREAM,
     )
 
-    time_taken = timer.get_elapsed_time()
     print(f'Status code: {r.status_code}')
 
     if STREAM:
@@ -52,11 +51,13 @@ if __name__ == '__main__':
 
         for line in r.iter_lines(decode_unicode=True):
             if line:
-                print(line)
+                print(line, end='')
 
+        time_taken = timer.get_elapsed_time()
         print('')
     else:
+        time_taken = timer.get_elapsed_time()
         resp_json = r.json()
         print(json.dumps(resp_json, indent=4, default=str))
 
-    print(f'Total time taken for  API call {time_taken} seconds')
+    print(f'Total time taken for API call {time_taken} seconds')

@@ -1,3 +1,4 @@
+import sys
 import argparse
 import requests
 import base64
@@ -5,7 +6,7 @@ import torch
 from PIL import Image
 from io import BytesIO
 from transformers import TextIteratorStreamer
-from flask import Flask, Response, request, jsonify, make_response, stream_with_context
+from flask import Flask, request, jsonify, make_response, stream_with_context
 from threading import Thread
 
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
@@ -181,7 +182,8 @@ def run_inference(data: dict, current_model_path: str, tokenizer, model, image_p
         thread.start()
 
         for new_text in streamer:
-            yield new_text
+            yield f'{new_text}\n\n'
+            sys.stdout.flush()
     else:
         streamer = None
 
@@ -253,8 +255,7 @@ def process_image():
         }
 
         if stream:
-            print('A: Streaming')
-            return Response(
+            response = make_response(
                 stream_with_context(
                     run_inference(
                         data,
@@ -264,9 +265,10 @@ def process_image():
                         image_processor,
                         context_len
                     )
-                ),
-                content_type='text/plain'
+                )
             )
+            response.headers['Content-Type'] = 'text/event-stream'
+            return response
         else:
             outputs = run_inference(
                 data,

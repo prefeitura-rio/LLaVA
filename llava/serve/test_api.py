@@ -4,7 +4,8 @@ import requests
 import base64
 
 
-BASE_URI = 'https://example.com'
+BASE_URI = 'https://9iyo58zn2vamnx-8888.proxy.runpod.net'
+STREAM = True
 
 
 class Timer:
@@ -30,19 +31,32 @@ if __name__ == '__main__':
         'image_base64': encode_image_to_base64('examples/waterview.jpg'),
         'prompt': 'What are the things I should be cautious about when I visit here?',
         'temperature': 0.2,
-        'max_new_tokens': 512
+        'max_new_tokens': 512,
+        'stream': STREAM
     }
 
     timer = Timer()
 
     r = requests.post(
         f'{BASE_URI}/inference',
-        json=payload
+        json=payload,
+        stream=STREAM,
     )
 
     time_taken = timer.get_elapsed_time()
+    print(f'Status code: {r.status_code}')
 
-    print(r.status_code)
-    resp_json = r.json()
-    print(json.dumps(resp_json, indent=4, default=str))
+    if STREAM:
+        if r.encoding is None:
+            r.encoding = 'utf-8'
+
+        for line in r.iter_lines(decode_unicode=True):
+            if line:
+                print(line)
+
+        print('')
+    else:
+        resp_json = r.json()
+        print(json.dumps(resp_json, indent=4, default=str))
+
     print(f'Total time taken for  API call {time_taken} seconds')

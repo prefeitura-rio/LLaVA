@@ -6,15 +6,14 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from llava.mm_utils import process_images, tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
 
-from PIL import Image
-
 import argparse
 import requests
 import base64
 from PIL import Image
 from io import BytesIO
-from transformers import TextStreamer
-from flask import Flask, request, jsonify, make_response
+from transformers import TextIteratorStreamer
+from flask import Flask, Response, request, jsonify, make_response, stream_with_context
+from threading import Thread
 
 disable_torch_init()
 
@@ -79,6 +78,19 @@ def load_image_from_base64(base64_str: str):
     image_bytes = base64.b64decode(base64_str)
     image = Image.open(BytesIO(image_bytes)).convert('RGB')
     return image
+
+
+def generate_wrapper(input_ids, image_tensor, temperature, max_new_tokens, streamer, stopping_criteria):
+    return model.generate(
+        input_ids,
+        images=image_tensor,
+        do_sample=True,
+        temperature=temperature,
+        max_new_tokens=max_new_tokens,
+        streamer=streamer,
+        use_cache=True,
+        stopping_criteria=stopping_criteria
+    )
 
 
 def run_inference(data: dict, current_model_path: str, tokenizer, model, image_processor, context_len):
@@ -153,24 +165,40 @@ def run_inference(data: dict, current_model_path: str, tokenizer, model, image_p
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
 
     if data['stream']:
-        streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+        streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+        thread = Thread(
+            target=generate_wrapper,
+            args=(
+                input_ids,
+                image_tensor,
+                data['temperature'],
+                data['max_new_tokens'],
+                streamer,
+                [stopping_criteria]
+            )
+        )
+
+        thread.start()
+
+        for new_text in streamer:
+            yield new_text
     else:
         streamer = None
 
-    with torch.inference_mode():
-        output_ids = model.generate(
-            input_ids,
-            images=image_tensor,
-            do_sample=True,
-            temperature=data['temperature'],
-            max_new_tokens=data['max_new_tokens'],
-            streamer=streamer,
-            use_cache=True,
-            stopping_criteria=[stopping_criteria])
+        with torch.inference_mode():
+            output_ids = generate_wrapper(
+                input_ids,
+                image_tensor,
+                data['temperature'],
+                data['max_new_tokens'],
+                streamer,
+                [stopping_criteria]
+            )
 
-    outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
-    conv.messages[-1][-1] = outputs
-    return outputs
+        outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
+        conv.messages[-1][-1] = outputs
+        return outputs
 
 
 @app.errorhandler(404)
@@ -208,34 +236,62 @@ def ping():
 def process_image():
     try:
         payload = request.get_json()
+        stream = payload.get('stream', False)
 
-        outputs = run_inference(
-            {
-                'model_path': payload.get('model_path', 'liuhaotian/llava-v1.5-13b'),
-                'model_base': payload.get('model_base', None),
-                'image_base64': payload.get('image_base64'),
-                'prompt': payload.get('prompt'),
-                'conv_mode': payload.get('conv_mode', None),
-                'temperature': payload.get('temperature', 0.2),
-                'max_new_tokens': payload.get('max_new_tokens', 512),
-                'load_8bit': payload.get('load_8bit', False),
-                'load_4bit': payload.get('load_4bit', False),
-                'image_aspect_ratio': payload.get('image_aspect_ratio', 'pad'),
-                'stream': payload.get('stream', False)
-            },
-            CURRENT_MODEL_PATH,
-            tokenizer,
-            model,
-            image_processor,
-            context_len
-        )
+        if stream:
+            return Response(
+                stream_with_context(
+                    run_inference(
+                        {
+                            'model_path': payload.get('model_path', 'liuhaotian/llava-v1.5-13b'),
+                            'model_base': payload.get('model_base', None),
+                            'image_base64': payload.get('image_base64'),
+                            'prompt': payload.get('prompt'),
+                            'conv_mode': payload.get('conv_mode', None),
+                            'temperature': payload.get('temperature', 0.2),
+                            'max_new_tokens': payload.get('max_new_tokens', 512),
+                            'load_8bit': payload.get('load_8bit', False),
+                            'load_4bit': payload.get('load_4bit', False),
+                            'image_aspect_ratio': payload.get('image_aspect_ratio', 'pad'),
+                            'stream': stream
+                        },
+                        CURRENT_MODEL_PATH,
+                        tokenizer,
+                        model,
+                        image_processor,
+                        context_len
+                    )
+                ),
+                content_type='text/plain'
+            )
+        else:
+            outputs = run_inference(
+                {
+                    'model_path': payload.get('model_path', 'liuhaotian/llava-v1.5-13b'),
+                    'model_base': payload.get('model_base', None),
+                    'image_base64': payload.get('image_base64'),
+                    'prompt': payload.get('prompt'),
+                    'conv_mode': payload.get('conv_mode', None),
+                    'temperature': payload.get('temperature', 0.2),
+                    'max_new_tokens': payload.get('max_new_tokens', 512),
+                    'load_8bit': payload.get('load_8bit', False),
+                    'load_4bit': payload.get('load_4bit', False),
+                    'image_aspect_ratio': payload.get('image_aspect_ratio', 'pad'),
+                    'stream': stream
+                },
+                CURRENT_MODEL_PATH,
+                tokenizer,
+                model,
+                image_processor,
+                context_len
+            )
 
-        return make_response(jsonify(
-            {
-                'status': 'ok',
-                'response': outputs.replace('</s>', '')
-            }
-        ), 200)
+            return make_response(jsonify(
+                {
+                    'status': 'ok',
+                    'response': outputs.replace('</s>', '')
+                }
+            ), 200)
     except Exception as e:
         return make_response(jsonify(
             {

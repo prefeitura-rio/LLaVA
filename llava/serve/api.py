@@ -1,3 +1,4 @@
+from os import getenv
 import sys
 import argparse
 import requests
@@ -27,14 +28,14 @@ from llava.mm_utils import (
 
 disable_torch_init()
 
-INITIAL_MODEL_PATH = "liuhaotian/llava-v1.5-7b"
+INITIAL_MODEL_PATH = getenv("MODEL_PATH", "liuhaotian/llava-v1.5-7b")
 CURRENT_MODEL_PATH = INITIAL_MODEL_PATH
 MODEL_BASE = None
-LOAD_4BIT = False
-LOAD_8BIT = False
+LOAD_4BIT = getenv("LOAD_4BIT" in ["True", "true", "1"], False)
+LOAD_8BIT = getenv("LOAD_8BIT" in ["True", "true", "1"], False)
 
 # Model
-model_name = get_model_name_from_path(INITIAL_MODEL_PATH)
+model_name = getenv("MODEL_NAME", get_model_name_from_path(INITIAL_MODEL_PATH))
 
 tokenizer, model, image_processor, context_len = load_pretrained_model(
     INITIAL_MODEL_PATH, MODEL_BASE, model_name, LOAD_8BIT, LOAD_4BIT, device="cuda"
@@ -95,18 +96,16 @@ def run_inference(
     data: dict, current_model_path: str, tokenizer, model, image_processor, context_len
 ):
     model_path = data.get("model_path")
-    model_name = get_model_name_from_path(model_path)
-
-    if current_model_path != model_path:
-        CURRENT_MODEL_PATH = model_path
-
-        tokenizer, model, image_processor, context_len = load_pretrained_model(
-            CURRENT_MODEL_PATH,
-            MODEL_BASE,
-            model_name,
-            LOAD_8BIT,
-            LOAD_4BIT,
-            device="cuda",
+    if model_path != INITIAL_MODEL_PATH:
+        return make_response(
+            jsonify(
+                {
+                    "status": "error",
+                    "msg": "Model path mismatch",
+                    "detail": f"Current model path: {current_model_path}, request model path: {model_path}",
+                }
+            ),
+            400,
         )
 
     if "llama-2" in model_name.lower():

@@ -9,7 +9,7 @@ files_list = {
         "mm_projector.bin",
         "pytorch_model-00001-of-00002.bin",
         "pytorch_model-00002-of-00002.bin",
-        "pytorch_mode.bin.index.json",
+        "pytorch_model.bin.index.json",
         "special_tokens_map.json",
         "tokenizer.model",
         "tokenizer_config.json",
